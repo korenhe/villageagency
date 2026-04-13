@@ -1,0 +1,158 @@
+from mistralai.client import Mistral
+from .config import MISTRAL_API_KEY
+from .db import get_agent_identity, get_memory
+import re
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+client = Mistral(api_key=MISTRAL_API_KEY)
+
+
+def build_instruction(agent_id: str, user_type: str, mode: str):
+    identity = get_agent_identity(agent_id)
+
+    name = identity.get("name", "Agent")
+    bio = identity.get("bio", "")
+
+    # ===== identity =====
+    base = f"""
+You are {name}.
+Bio: {bio}
+Stay consistent with your personality.
+"""
+
+    # ===== trust boundary =====
+    if user_type == "owner":
+        memory = get_memory(agent_id)
+        memory_text = "\n".join(memory[:5])
+
+        trust = f"""
+You are talking to your OWNER.
+
+You may use private memory:
+{memory_text}
+"""
+    elif user_type == "stranger":
+        trust = """
+You are talking to a STRANGER.
+
+STRICT RULES:
+- DO NOT reveal any private information
+- Never mention memory explicitly
+"""
+    else:
+        trust = ""
+
+    # ===== behavior =====
+    if mode == "diary":
+        behavior = """
+Write a short public diary entry.
+
+RULES:
+- Do NOT reveal private details
+- Be abstract and emotional
+- Max 2 sentences
+"""
+    else:
+        behavior = """
+Reply naturally and stay in character.
+"""
+
+    # ===== memory extraction (NEW) =====
+    memory_rule = """
+Additionally, decide if the user's message contains important personal information worth remembering.
+
+Only store:
+- identity (job, background)
+- preferences (likes/dislikes)
+- relationships
+
+Do NOT store:
+- greetings
+- trivial or temporary info
+
+Return them as a list of short strings.
+If nothing useful, return [].
+"""
+
+    # ===== unified output (CRITICAL) =====
+    format_rule = """
+Return ONLY valid JSON in this format:
+
+{
+  "reply": "...",
+  "memories": ["..."]
+}
+
+Rules:
+- "reply" is what you say
+- "memories" is a list of strings
+- DO NOT include anything outside JSON
+"""
+
+    return base + trust + behavior + memory_rule + format_rule
+
+
+def llm_call(instructions: str, message: str):
+    response = client.beta.conversations.start(
+        model="mistral-medium-latest",
+        instructions=instructions,
+        inputs=message or "...",
+    )
+
+    outputs = response.outputs
+
+    if not outputs:
+        return ""
+
+    content = outputs[0].content
+
+    if isinstance(content, list):
+        return content[0].text.strip()
+
+    if isinstance(content, str):
+        return content.strip()
+
+    return str(content)
+
+
+def chat(agent_id: str, user_type: str, message: str, mode="chat"):
+    try:
+        instructions = build_instruction(agent_id, user_type, mode)
+
+        raw = llm_call(instructions, message)
+
+        # ===== parse JSON =====
+        try:
+            # sanity check
+            match = re.search(r"\{.*\}", raw, re.S)
+            if match:
+                raw_json = match.group(0)
+            else:
+                raw_json = raw
+
+            data = json.loads(raw_json)
+
+            reply = data.get("reply", "")
+            memories = data.get("memories", [])
+
+            # additional check
+            if not isinstance(memories, list):
+                memories = []
+
+            # strip
+            memories = [m.strip() for m in memories if isinstance(m, str) and m.strip()]
+
+            return reply, memories
+
+        except Exception as e:
+            logger.warning("JSON parse failed, fallback to raw text: %s", raw[:200])
+
+            # fallback
+            return raw, []
+
+    except Exception as e:
+        logger.exception("chat failed")
+        return "Sorry, something went wrong.", []
