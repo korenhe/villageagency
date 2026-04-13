@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+
+import argparse
+import requests
+import sys
+
+# ===== config =====
+BASE_URL = "http://127.0.0.1:8000/message"
+
+AGENT_MAP = {
+    "1": "a1a1a1a1-0000-0000-0000-000000000001",
+    "2": "a2a2a2a2-0000-0000-0000-000000000002",
+    "3": "a3a3a3a3-0000-0000-0000-000000000003",
+}
+
+VALID_TYPES = {"owner", "stranger"}
+
+
+# ===== CLI =====
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Send message to agent"
+    )
+
+    parser.add_argument(
+        "--agent",
+        default="1",
+        help="agent id (1/2/3), default=1"
+    )
+
+    parser.add_argument(
+        "--type",
+        default="owner",
+        help="owner or stranger (default=owner)"
+    )
+
+    parser.add_argument(
+        "message",
+        nargs="+",
+        help="message text"
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    agent_short = str(args.agent)
+    user_type = args.type
+    message = " ".join(args.message)
+
+    # check agent
+    if agent_short not in AGENT_MAP:
+        print(f"Invalid agent: {agent_short} (use 1/2/3)")
+        sys.exit(1)
+
+    agent_id = AGENT_MAP[agent_short]
+
+    # check type
+    if user_type not in VALID_TYPES:
+        print("Invalid type: must be 'owner' or 'stranger'")
+        sys.exit(1)
+
+    payload = {
+        "agent_id": agent_id,
+        "user_type": user_type,
+        "message": message,
+    }
+
+    try:
+        r = requests.post(BASE_URL, json=payload)
+
+        if r.status_code != 200:
+            print("Request failed:", r.status_code)
+            print(r.text)
+            sys.exit(1)
+
+        data = r.json()
+        print(data.get("reply", ""))
+
+    except Exception as e:
+        print("Error:", e)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
