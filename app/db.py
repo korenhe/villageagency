@@ -1,6 +1,7 @@
 import requests
 from .config import SUPABASE_URL, SUPABASE_KEY
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,13 @@ def db_insert(table: str, payload: dict):
         return False
 
 
-def db_select(table: str, filters: str = "", select: str = ""):
+def db_select(
+    table: str,
+    filters: str = "",
+    select: str = "",
+    order: str = "",
+    limit: int = None,
+):
     url = f"{SUPABASE_URL}/{table}?"
 
     parts = []
@@ -43,12 +50,18 @@ def db_select(table: str, filters: str = "", select: str = ""):
     if select:
         parts.append(f"select={select}")
 
+    if order:
+        parts.append(f"order={order}")
+
+    if limit is not None:
+        parts.append(f"limit={limit}")
+
     url += "&".join(parts)
 
     try:
         r = requests.get(url, headers=HEADERS)
 
-        logger.debug("SELECT %s | status=%s", table, r.status_code)
+        logger.debug("SELECT %s | status=%s | url=%s", table, r.status_code, url)
 
         if r.status_code != 200:
             logger.error("SELECT FAILED [%s]: %s", table, r.text)
@@ -63,8 +76,14 @@ def db_select(table: str, filters: str = "", select: str = ""):
 
 
 # get group
-def get_memory(agent_id):
-    data = db_select("living_memory", filters=f"agent_id=eq.{agent_id}", select="text")
+def get_memory(agent_id, limit=5):
+    data = db_select(
+        "living_memory",
+        filters=f"agent_id=eq.{agent_id}",
+        select="text",
+        order="created_at.desc",
+        limit=limit,
+    )
     return [x["text"] for x in data]
 
 

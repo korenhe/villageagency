@@ -1,6 +1,6 @@
 from mistralai.client import Mistral
-from .config import MISTRAL_API_KEY
-from .db import get_agent_identity, get_memory
+from .config import MISTRAL_API_KEY, AGENT_MEMORY_MAX
+from .db import get_agent_identity, get_memory, get_recent_diaries
 import re
 import json
 import logging
@@ -25,8 +25,8 @@ Stay consistent with your personality.
 
     # ===== trust boundary =====
     if user_type == "owner":
-        memory = get_memory(agent_id)
-        memory_text = "\n".join(memory[:5])
+        memory = get_memory(agent_id, AGENT_MEMORY_MAX)
+        memory_text = "\n".join(memory)
 
         trust = f"""
 You are talking to your OWNER.
@@ -47,6 +47,11 @@ STRICT RULES:
 
     # ===== behavior =====
     if mode == "diary":
+        diaries = get_recent_diaries(agent_id, limit=3)
+        recent_text = "\n".join(
+            ["- {}".format(d.get("text", "").strip()) for d in diaries if d.get("text")]
+        )
+
         behavior = """
 Write a short public diary entry.
 
@@ -55,6 +60,29 @@ RULES:
 - Be abstract and emotional
 - Max 2 sentences
 """
+
+        if recent_text:
+            behavior += """
+Your recent diary entries:
+{}
+
+DO NOT:
+- repeat similar ideas
+- reuse wording or sentence structures
+- write similar emotional tone
+
+Each new entry must feel clearly different.
+
+Vary your style:
+- reflection
+- observation
+- curiosity
+- emotion
+
+Avoid generic phrases.
+Be slightly specific.
+""".format(recent_text)
+
     else:
         behavior = """
 Reply naturally and stay in character.
@@ -89,7 +117,8 @@ Return ONLY valid JSON in this format:
 Rules:
 - "reply" is what you say
 - "memories" is a list of strings
-- DO NOT include anything outside JSON
+- Return ONLY valid JSON. Do not wrap in markdown. Do not add explanation.
+- DO NOT include anything outside JSON.
 """
 
     return base + trust + behavior + memory_rule + format_rule
@@ -121,19 +150,29 @@ def llm_call(instructions: str, message: str):
 def chat(agent_id: str, user_type: str, message: str, mode="chat"):
     try:
         instructions = build_instruction(agent_id, user_type, mode)
-
+        logger.debug("instructions: %s", instructions)
         raw = llm_call(instructions, message)
 
         # ===== parse JSON =====
         try:
-            # sanity check
-            match = re.search(r"\{.*\}", raw, re.S)
-            if match:
-                raw_json = match.group(0)
-            else:
-                raw_json = raw
+            raw_clean = raw.strip()
 
-            data = json.loads(raw_json)
+            # 1. remove ```json ... ``` code fence
+            if raw_clean.startswith("```"):
+                raw_clean = re.sub(r"^```[a-zA-Z]*\n?", "", raw_clean)
+                raw_clean = re.sub(r"\n?```$", "", raw_clean)
+                raw_clean = raw_clean.strip()
+
+            try:
+                data = json.loads(raw_clean)
+            except Exception:
+                start = raw_clean.find("{")
+                end = raw_clean.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    raw_json = raw_clean[start : end + 1]
+                else:
+                    raise ValueError("No JSON object found")
+                data = json.loads(raw_json)
 
             reply = data.get("reply", "")
             memories = data.get("memories", [])
@@ -148,11 +187,14 @@ def chat(agent_id: str, user_type: str, message: str, mode="chat"):
             return reply, memories
 
         except Exception as e:
-            logger.warning("JSON parse failed, fallback to raw text: %s", raw[:200])
+            logger.warning(
+                "JSON parse failed, fallback to raw text: %s | err=%s",
+                raw[:200],
+                str(e),
+            )
 
             # fallback
             return raw, []
-
     except Exception as e:
         logger.exception("chat failed")
         return "Sorry, something went wrong.", []

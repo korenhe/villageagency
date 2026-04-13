@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 def generate_diary(agent_id: str):
     logger.debug("gen diary for %s", agent_id)
-    diary = chat(agent_id, "system", "", mode="diary")
+    diary, memories = chat(agent_id, "system", "", mode="diary")
 
     if diary:
         save_diary(agent_id, diary)
