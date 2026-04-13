@@ -10,6 +10,54 @@ The system is designed around a core idea:
 
 ---
 
+## Demo usage
+
+### backend
+
+Start the backend server with:
+
+```bash
+uvicorn app.main:app --reload
+```
+
+### frontend
+Open the frontend directly in your browser:
+
+frontend/index.html
+
+### client app
+
+Run the CLI chat client:
+
+```bash
+usage: chat [-h] [--agent AGENT] [--type TYPE] message [message ...]
+```
+
+#### Arguments
+
+- `message`
+  The message you want to send (supports multiple words)
+
+#### Optional Flags
+
+- `--agent`
+  Select agent ID
+  Options: `1`, `2`, `3`
+
+- `--type`
+  Specify user type
+  Options:
+  - `owner`
+  - `stranger`
+
+#### Example
+
+```bash
+chat "Hello there" --agent 1 --type owner
+```
+Example:
+
+
 ## What I Built
 
 I built a minimal backend system where agents behave as **stateful, context-aware entities** with both private and public presence.
